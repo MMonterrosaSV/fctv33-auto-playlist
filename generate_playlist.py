@@ -5,11 +5,25 @@ import requests
 from datetime import datetime, timezone
 from playwright.sync_api import sync_playwright
 
-RESOLVER = "https://fctv33-stream-resolver.onrender.com"  # ← change if your Render URL is different
+RESOLVER = "https://fctv33-stream-resolver.onrender.com"  # ← change if needed
 FOOTBALL_URL = "https://www.fctv33hd.icu/football.html"
 
+# Only these leagues are allowed
+ALLOWED_KEYWORDS = [
+    "united-states-major-league-soccer",   # MLS
+    "major-league-soccer",
+    "spanish-la-liga",                     # La Liga
+    "la-liga",
+    "english-premier-league",              # Premier League
+    "premier-league",
+]
+
+def is_allowed_match(url: str) -> bool:
+    url_lower = url.lower()
+    return any(keyword in url_lower for keyword in ALLOWED_KEYWORDS)
+
 def get_live_match_urls() -> list[str]:
-    """Open the football page with a real browser and extract live match links."""
+    """Open the football page and extract only the allowed league match links."""
     urls = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -18,26 +32,25 @@ def get_live_match_urls() -> list[str]:
         )
         print("Loading football page...")
         page.goto(FOOTBALL_URL, wait_until="networkidle", timeout=60000)
-        
-        # Wait a bit extra for live matches to appear
         page.wait_for_timeout(8000)
 
-        # Extract all links that look like match pages
         links = page.eval_on_selector_all(
             "a[href*='/football/'][href*='-match-']",
             "elements => elements.map(el => el.href)"
         )
-        
-        # Keep only unique live-looking match pages
+
         seen = set()
         for link in links:
-            if link not in seen and "match-" in link and link.endswith(".html"):
+            if (link not in seen 
+                and "match-" in link 
+                and link.endswith(".html")
+                and is_allowed_match(link)):
                 seen.add(link)
                 urls.append(link)
 
         browser.close()
     
-    print(f"Found {len(urls)} match links")
+    print(f"Found {len(urls)} allowed match links (MLS + La Liga + Premier League)")
     return urls
 
 def resolve_match(match_url: str) -> dict | None:
@@ -48,7 +61,7 @@ def resolve_match(match_url: str) -> dict | None:
             timeout=90
         )
         if r.status_code != 200:
-            print(f"  Resolve failed ({r.status_code}): {match_url}")
+            print(f"  Resolve failed ({r.status_code})")
             return None
         data = r.json()
         if "playableUrl" in data:
@@ -59,7 +72,7 @@ def resolve_match(match_url: str) -> dict | None:
         return None
 
 def main():
-    print("Starting automatic playlist generation...")
+    print("Starting automatic playlist generation (MLS + La Liga + Premier League only)...")
     
     match_urls = get_live_match_urls()
     
@@ -74,21 +87,21 @@ def main():
                 "url": data["playableUrl"]
             })
             print(f"  → {name}")
-        time.sleep(4)  # be gentle with free Render
+        time.sleep(4)
 
     # Write the playlist
     lines = ["#EXTM3U"]
     lines.append(f"# Generated at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    lines.append(f"# Source: {FOOTBALL_URL}")
+    lines.append("# Leagues: MLS + La Liga + Premier League")
     
     for s in streams:
-        lines.append(f'#EXTINF:-1 group-title="FCTV33 Live",{s["name"]}')
+        lines.append(f'#EXTINF:-1 group-title="FCTV33 Selected",{s["name"]}')
         lines.append(s["url"])
 
     with open("playlist.m3u", "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
-    print(f"\nDone! playlist.m3u created with {len(streams)} live streams")
+    print(f"\nDone! playlist.m3u created with {len(streams)} streams")
 
 if __name__ == "__main__":
     main()
