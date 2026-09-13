@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-import os
 import time
 import requests
 from datetime import datetime, timezone
 from playwright.sync_api import sync_playwright
 
-RESOLVER = "https://fctv33-stream-resolver.onrender.com"  # ← change if needed
+# Your free Render resolver URL
+RESOLVER = "https://fctv33-stream-resolver.onrender.com"
 FOOTBALL_URL = "https://www.fctv33hd.icu/football.html"
 
-# Only these leagues are allowed
+# Only these leagues
 ALLOWED_KEYWORDS = [
-    "united-states-major-league-soccer",   # MLS
+    "united-states-major-league-soccer",
     "major-league-soccer",
-    "spanish-la-liga",                     # La Liga
+    "spanish-la-liga",
     "la-liga",
-    "english-premier-league",              # Premier League
+    "english-premier-league",
     "premier-league",
 ]
 
@@ -41,19 +41,20 @@ def get_live_match_urls() -> list[str]:
 
         seen = set()
         for link in links:
-            if (link not in seen 
-                and "match-" in link 
+            if (link not in seen
+                and "match-" in link
                 and link.endswith(".html")
                 and is_allowed_match(link)):
                 seen.add(link)
                 urls.append(link)
 
         browser.close()
-    
+
     print(f"Found {len(urls)} allowed match links (MLS + La Liga + Premier League)")
     return urls
 
-def resolve_match(match_url: str) -> dict | None:
+def resolve_match(match_url: str) -> list[dict]:
+    """Returns a list of ALL available streams for the match."""
     try:
         r = requests.get(
             f"{RESOLVER}/api/resolve-link",
@@ -62,38 +63,52 @@ def resolve_match(match_url: str) -> dict | None:
         )
         if r.status_code != 200:
             print(f"  Resolve failed ({r.status_code})")
-            return None
+            return []
+
         data = r.json()
+
+        # New format – multiple streams
+        if "streams" in data and isinstance(data["streams"], list):
+            return data["streams"]
+
+        # Old format – single stream (backward compatibility)
         if "playableUrl" in data:
-            return data
-        return None
+            return [data]
+
+        return []
     except Exception as e:
         print(f"  Error: {e}")
-        return None
+        return []
 
 def main():
-    print("Starting automatic playlist generation (MLS + La Liga + Premier League only)...")
-    
+    print("Starting automatic playlist generation (MLS + La Liga + Premier League)...")
+    print("Will collect ALL available livestream options for each match.\n")
+
     match_urls = get_live_match_urls()
-    
+
     streams = []
     for i, url in enumerate(match_urls, 1):
         print(f"[{i}/{len(match_urls)}] Resolving: {url}")
-        data = resolve_match(url)
-        if data:
-            name = data.get("name", "Unknown Match")
-            streams.append({
-                "name": name,
-                "url": data["playableUrl"]
-            })
-            print(f"  → {name}")
-        time.sleep(4)
+        resolved = resolve_match(url)
 
-    # Write the playlist
+        for data in resolved:
+            name = data.get("name", "Unknown Match")
+            playable = data.get("playableUrl")
+            if playable:
+                streams.append({
+                    "name": name,
+                    "url": playable
+                })
+                print(f"  → {name}")
+
+        time.sleep(4)  # be gentle with free Render
+
+    # Build the playlist
     lines = ["#EXTM3U"]
     lines.append(f"# Generated at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append("# Leagues: MLS + La Liga + Premier League")
-    
+    lines.append("# Includes all available livestream options per match")
+
     for s in streams:
         lines.append(f'#EXTINF:-1 group-title="FCTV33 Selected",{s["name"]}')
         lines.append(s["url"])
