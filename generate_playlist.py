@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
+"""
+FCTV33 Auto Playlist Generator
+- Fetches live football matches via the site's real API (protobuf)
+- Builds correct match page URLs
+- Resolves them through https://fctv33-stream-resolver.onrender.com
+- Outputs playlist.m3u
+"""
+
+import re
 import time
 import requests
 from datetime import datetime, timezone
-from playwright.sync_api import sync_playwright
 
 RESOLVER = "https://fctv33-stream-resolver.onrender.com"
-FOOTBALL_URL = "https://www.fctv33hd.icu/football.html"
+API_HOST = "https://apis-data-defra10.tcdru136ovur.ru"
+SITE = "https://www.fctv33hd.icu"
 
+# Only keep these competitions
 ALLOWED_KEYWORDS = [
     "united-states-major-league-soccer",
     "major-league-soccer",
@@ -17,135 +27,104 @@ ALLOWED_KEYWORDS = [
     "mls",
 ]
 
-def is_allowed_match(url: str) -> bool:
-    url_lower = url.lower()
-    return any(k in url_lower for k in ALLOWED_KEYWORDS)
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+    "Origin": SITE,
+    "Referer": f"{SITE}/",
+}
 
-def get_live_match_urls() -> list[str]:
-    urls = []
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-web-security",
-                "--disable-features=IsolateOrigins,site-per-process",
-            ]
-        )
 
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080},
-            locale="en-US",
-            timezone_id="America/New_York",
-            extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            }
-        )
+# ─────────────────────────── Protobuf helpers ───────────────────────────
 
-        # Hide webdriver flag
-        page = context.new_page()
-        page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            window.chrome = { runtime: {} };
-        """)
+def read_varint(buf: bytes, offset: int):
+    value = 0
+    shift = 0
+    i = offset
+    while i < len(buf):
+        b = buf[i]
+        i += 1
+        value |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return value, i
+        shift += 7
+    return None, i
 
-        print("Loading football page with stealth settings...")
+
+def parse_fields(buf: bytes) -> dict:
+    fields = {}
+    off = 0
+    while off < len(buf):
+        tag, off = read_varint(buf, off)
+        if tag is None:
+            break
+        field = tag >> 3
+        wire = tag & 7
+        if wire == 0:
+            val, off = read_varint(buf, off)
+            fields.setdefault(field, []).append(("v", val))
+        elif wire == 2:
+            length, off = read_varint(buf, off)
+            chunk = buf[off : off + length]
+            off += length
+            fields.setdefault(field, []).append(("b", chunk))
+        else:
+            break
+    return fields
+
+
+# ─────────────────────────── Fetch live matches ───────────────────────────
+
+def get_live_payload(session: requests.Session) -> bytes:
+    """Try recent signed endpoints until one works."""
+    candidates = [
+        f"{API_HOST}/sfverdab4bf2dcada5d245aec29071696df9d0c108c/api/match/live",
+        f"{API_HOST}/sfverdab4bfebd09dfe16220cc5f83b7cd68ca28b60/api/match/live",
+    ]
+    params = {"sportType": "1", "language": "0", "stream": "true"}
+
+    for base in candidates:
         try:
-            page.goto(FOOTBALL_URL, wait_until="networkidle", timeout=90000)
+            r = session.get(base, params=params, headers=HEADERS, timeout=20)
+            if r.status_code == 200 and len(r.content) > 5000:
+                print(f"Using endpoint: {base}")
+                return r.content
         except Exception as e:
-            print(f"goto error: {e}")
-            page.goto(FOOTBALL_URL, timeout=90000)
+            print(f"Endpoint failed: {e}")
+    raise RuntimeError("Could not fetch live match list – signed path may have rotated")
 
-        page.wait_for_timeout(12000)
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        page.wait_for_timeout(4000)
 
-        title = page.title()
-        print(f"Page title: '{title}'")
+def extract_matches(data: bytes) -> list[dict]:
+    """Parse protobuf → list of {id, title, url}."""
+    # Top-level field 10 contains the match list
+    offset = 0
+    payload = None
+    while offset < len(data):
+        tag, offset = read_varint(data, offset)
+        if tag is None:
+            break
+        field = tag >> 3
+        wire = tag & 7
+        if wire == 2:
+            length, offset = read_varint(data, offset)
+            if field == 10:
+                payload = data[offset : offset + length]
+                break
+            offset += length
+        elif wire == 0:
+            _, offset = read_varint(data, offset)
 
-        # Dump a small part of the HTML so we can see what we got
-        html = page.content()
-        print(f"HTML length: {len(html)}")
-        print("First 500 chars of HTML:")
-        print(html[:500])
-        print("...")
+    if not payload:
+        raise RuntimeError("No match list found in response")
 
-        # Get all links
-        all_hrefs = page.eval_on_selector_all(
-            "a",
-            "els => els.map(el => el.href)"
-        )
-        print(f"Total <a> tags: {len(all_hrefs)}")
-
-        football_links = [h for h in all_hrefs if h and "/football/" in h.lower()]
-        print(f"Football links: {len(football_links)}")
-        for link in football_links[:15]:
-            print(f"  {link}")
-
-        seen = set()
-        for link in football_links:
-            if link not in seen and "match-" in link.lower() and link.endswith(".html"):
-                seen.add(link)
-                if is_allowed_match(link):
-                    urls.append(link)
-                    print(f"  ✓ {link}")
-                else:
-                    print(f"  ✗ {link}")
-
-        browser.close()
-
-    print(f"\nAllowed matches found: {len(urls)}")
-    return urls
-
-def resolve_match(match_url: str) -> list[dict]:
-    try:
-        r = requests.get(f"{RESOLVER}/api/resolve-link", params={"url": match_url}, timeout=90)
-        print(f"  Resolver status: {r.status_code}")
-        if r.status_code != 200:
-            return []
-        data = r.json()
-        if "streams" in data and isinstance(data["streams"], list):
-            return data["streams"]
-        if "playableUrl" in data:
-            return [data]
-        return []
-    except Exception as e:
-        print(f"  Error: {e}")
-        return []
-
-def main():
-    print("=" * 60)
-    match_urls = get_live_match_urls()
-
-    if not match_urls:
-        with open("playlist.m3u", "w") as f:
-            f.write("#EXTM3U\n# No matching live matches found\n")
-        print("No matches → empty playlist written")
-        return
-
-    streams = []
-    for i, url in enumerate(match_urls, 1):
-        print(f"\n[{i}/{len(match_urls)}] {url}")
-        for data in resolve_match(url):
-            name = data.get("name", "Unknown")
-            if data.get("playableUrl"):
-                streams.append({"name": name, "url": data["playableUrl"]})
-                print(f"  → {name}")
-        time.sleep(4)
-
-    lines = ["#EXTM3U", f"# {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"]
-    for s in streams:
-        lines.append(f'#EXTINF:-1 group-title="FCTV33 Selected",{s["name"]}')
-        lines.append(s["url"])
-
-    with open("playlist.m3u", "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
-
-    print(f"\nDone → {len(streams)} streams")
-
-if __name__ == "__main__":
-    main()
+    # Each match is a length-delimited field 1
+    raw_matches = []
+    offset = 0
+    while offset < len(payload):
+        tag, offset = read_varint(payload, offset)
+        if tag is None:
+            break
