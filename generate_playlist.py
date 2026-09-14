@@ -18,6 +18,7 @@ SITE = "https://www.fctv33hd.icu"
 
 # Only keep these competitions
 ALLOWED_KEYWORDS = [
+    "mexico-liga-mx",
     "united-states-major-league-soccer",
     "major-league-soccer",
     "spanish-la-liga",
