@@ -24,6 +24,7 @@ ALLOWED_KEYWORDS = [
     "premier-league",
     "barcelona",
     "real-madrid",
+    "ukrainian-first-league",
     
 ]
 
