@@ -2,7 +2,7 @@ name: Auto FCTV33 Playlist
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # every 10 minutes
+    - cron: '0 */12 * * *'   # every 12 hours
   workflow_dispatch:
 
 permissions:
