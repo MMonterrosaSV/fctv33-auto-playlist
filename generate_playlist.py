@@ -24,6 +24,7 @@ ALLOWED_KEYWORDS = [
     "premier-league",
     "barcelona",
     "real-madrid",
+    "italian-serie-a",
     "ukrainian-first-league",
     
 ]
@@ -273,7 +274,7 @@ def main():
         f"# Matches: {len(matches)} | Streams: {len(streams)}",
     ]
     for s in streams:
-        lines.append(f'#EXTINF:-1 group-title="FCTV33",{s["name"]}')
+        lines.append(f'#EXTINF:-1 group-title="FCTV33 LIVE EVENTS",{s["name"]}')
         lines.append(s["url"])
 
     with open("playlist.m3u", "w", encoding="utf-8") as f:
