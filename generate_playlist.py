@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 RESOLVER = "https://fctv33-stream-resolver.onrender.com"
 API_HOST = "https://apis-data-defra10.tcdru136ovur.ru"
 SITE = "https://www.fctv33hd.icu"
+MOVITV_PLAYLIST = "https://movitv.pro/"
 
 # Only keep these competitions
 ALLOWED_KEYWORDS = [
@@ -26,7 +27,6 @@ ALLOWED_KEYWORDS = [
     "real-madrid",
     "italian-serie-a",
     "ukrainian-first-league",
-    
 ]
 
 HEADERS = {
@@ -228,6 +228,91 @@ def resolve_match(match_url: str) -> list[dict]:
         return []
 
 
+# ─────────────────────────── movitv.pro logo matching ───────────────────────────
+
+def normalize_match_name(name: str) -> str:
+    """Lowercase, strip punctuation, remove common filler words."""
+    name = name.lower()
+    # Drop trailing (2), (3), etc. that movitv adds for multi-links
+    name = re.sub(r"\s*\(\d+\)\s*$", "", name)
+    name = re.sub(r"[^\w\s]", " ", name)          # keep only letters/numbers/spaces
+    # Remove only true fillers – keep "united" / "city" because they are
+    # part of many real team names (Man United, Man City, etc.)
+    name = re.sub(r"\b(vs|v|fc|cf|sc|ac|the)\b", " ", name)
+    # Common abbreviations so PSG matches "Paris Saint Germain"
+    name = re.sub(r"\bpsg\b", "paris germain", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name
+
+
+def extract_teams(name: str) -> set[str]:
+    """Split a match name into individual team tokens."""
+    norm = normalize_match_name(name)
+    parts = re.split(r"\s+", norm)
+    # Keep tokens longer than 2 chars
+    return {p for p in parts if len(p) > 2}
+
+
+def fetch_movitv_logos(session: requests.Session) -> list[dict]:
+    """
+    Download https://movitv.pro/ and return list of
+    {"name": "...", "logo": "https://..."}.
+    Only entries that have a tvg-logo are kept.
+    """
+    try:
+        r = session.get(MOVITV_PLAYLIST, timeout=25)
+        r.raise_for_status()
+        text = r.text
+    except Exception as e:
+        print(f"  Could not fetch movitv playlist: {e}")
+        return []
+
+    logos = []
+    # Match lines like:
+    # #EXTINF:-1 ... tvg-logo="https://..." ...,Team A-Team B
+    pattern = re.compile(
+        r'#EXTINF:[^\n]*?tvg-logo="([^"]+)"[^\n]*,\s*(.+)',
+        re.IGNORECASE,
+    )
+    for m in pattern.finditer(text):
+        logo_url = m.group(1).strip()
+        event_name = m.group(2).strip()
+        # Skip pure channel logos / playlists that are not match events
+        if not logo_url or not event_name:
+            continue
+        # Prefer entries that look like matches (contain a separator)
+        if any(sep in event_name for sep in ("-", " vs ", " v ", "@")):
+            logos.append({"name": event_name, "logo": logo_url})
+
+    print(f"  movitv events with logos: {len(logos)}")
+    return logos
+
+
+def find_logo(match_name: str, movitv_entries: list[dict]) -> str | None:
+    """Return the best matching logo URL or None."""
+    our_teams = extract_teams(match_name)
+    if len(our_teams) < 2:
+        return None
+
+    best_logo = None
+    best_score = 0
+
+    for entry in movitv_entries:
+        their_teams = extract_teams(entry["name"])
+        if not their_teams:
+            continue
+        # Score = number of overlapping team tokens
+        overlap = len(our_teams & their_teams)
+        if overlap > best_score:
+            best_score = overlap
+            best_logo = entry["logo"]
+            # Perfect match (both teams found) → stop early
+            if best_score >= 2:
+                break
+
+    return best_logo if best_score >= 2 else None
+
+
 # ─────────────────────────── Main ───────────────────────────
 
 def main():
@@ -267,21 +352,39 @@ def main():
                 print(f"  → {name}")
         time.sleep(3)  # be nice to the free Render instance
 
+    # ── 3. Steal logos from movitv.pro ──────────────────────────────────
+    print("\n3. Matching logos from movitv.pro…")
+    movitv_entries = fetch_movitv_logos(session)
+    logo_hits = 0
+    for s in streams:
+        logo = find_logo(s["name"], movitv_entries)
+        if logo:
+            s["logo"] = logo
+            logo_hits += 1
+            print(f"  ✓ {s['name']}  →  {logo}")
+        else:
+            print(f"  ✗ {s['name']}  (no match)")
+
     # Write playlist
     lines = [
         "#EXTM3U",
         f"# Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-        f"# Matches: {len(matches)} | Streams: {len(streams)}",
+        f"# Matches: {len(matches)} | Streams: {len(streams)} | Logos: {logo_hits}",
     ]
     for s in streams:
-        lines.append(f'#EXTINF:-1 group-title="FCTV33 LIVE EVENTS",{s["name"]}')
+        if s.get("logo"):
+            lines.append(
+                f'#EXTINF:-1 tvg-logo="{s["logo"]}" group-title="FCTV33 LIVE EVENTS",{s["name"]}'
+            )
+        else:
+            lines.append(f'#EXTINF:-1 group-title="FCTV33 LIVE EVENTS",{s["name"]}')
         lines.append(s["url"])
 
     with open("playlist.m3u", "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     print("\n" + "=" * 70)
-    print(f"Done → {len(streams)} streams written to playlist.m3u")
+    print(f"Done → {len(streams)} streams ({logo_hits} with logos) written to playlist.m3u")
     print("=" * 70)
 
 
