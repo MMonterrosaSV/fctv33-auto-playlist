@@ -18,14 +18,13 @@ SITE = "https://www.fctv33hd.icu"
 
 # Only keep these competitions
 ALLOWED_KEYWORDS = [
-    "mexico-liga-mx",
-    "united-states-major-league-soccer",
-    "major-league-soccer",
     "spanish-la-liga",
     "la-liga",
     "english-premier-league",
     "premier-league",
-    "mls",
+    "barcelona",
+    "real-madrid",
+    
 ]
 
 HEADERS = {
