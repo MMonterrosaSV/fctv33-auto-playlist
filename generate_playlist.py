@@ -19,7 +19,7 @@ MOVITV_PLAYLIST = "https://movitv.pro/"
 ALLOWED_KEYWORDS = [
     "spanish-la-liga",
     "english-premier-league",
-""" "italian-serie-a", """
+    "italian-serie-a",
     "barcelona",
     "real-madrid",
     
