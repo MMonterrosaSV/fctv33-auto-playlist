@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write          # ← this is the important line
+  contents: write
 
 jobs:
   generate:
@@ -20,9 +20,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: |
-          pip install requests playwright
-          playwright install chromium --with-deps
+        run: pip install requests
 
       - name: Generate playlist
         run: python generate_playlist.py
