@@ -4,7 +4,7 @@ FCTV33 Auto Playlist Generator
 - Fetches live football matches via the site's real API (protobuf)
 - Builds correct match page URLs
 - Resolves them through https://fctv33-stream-resolver.onrender.com
-- Outputs playlist.m3u
+- Outputs playlist.m3u with match names (not league names)
 """
 
 import re
@@ -147,7 +147,7 @@ def extract_matches(data: bytes) -> list[dict]:
         if not match_id:
             continue
 
-        # Title
+        # Title (the actual match name)
         title = None
         for _, v in f.get(30, []):
             if b" vs " in v:
@@ -257,7 +257,8 @@ def main():
         print(f"\n[{i}/{len(matches)}] {m['title']}")
         print(f"  URL: {m['url']}")
         for data in resolve_match(m["url"]):
-            name = data.get("name") or m["title"]
+            # Always prefer the clean match name we extracted
+            name = m["title"] or data.get("name") or "Unknown"
             playable = data.get("playableUrl")
             if playable:
                 streams.append({"name": name, "url": playable})
