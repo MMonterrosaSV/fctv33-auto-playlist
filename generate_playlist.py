@@ -18,7 +18,9 @@ MOVITV_PLAYLIST = "https://movitv.pro/"
 # Only keep these competitions
 ALLOWED_KEYWORDS = [
     "spanish-la-liga",
+    "la-liga",
     "english-premier-league",
+    "premier-league",
     "barcelona",
     "real-madrid",
     "italian-serie-a",
@@ -286,19 +288,28 @@ def main():
                 streams.append({"name": name, "url": playable})
                 print(f"  → {name}")
         time.sleep(3)  # be nice to the free Render instance
-    # ── 3. After list is ready: steal logos from movitv.pro ──────────────
-    print("\n3. Matching logos from movitv.pro…")
-    movitv_entries = fetch_movitv_logos(session)
+    # ── 3. After list is ready: optionally steal logos from movitv.pro ──
+    # This step NEVER removes streams. No match / any error → keep entry as-is.
     logo_hits = 0
-    for s in streams:
-        logo = find_logo(s["name"], movitv_entries)
-        if logo:
-            s["logo"] = logo
-            logo_hits += 1
-            print(f"  ✓ {s['name']}  →  {logo}")
-        else:
-            print(f"  ✗ {s['name']}  (no match – left as is)")
-    # Write playlist
+    try:
+        print("\n3. Matching logos from movitv.pro…")
+        movitv_entries = fetch_movitv_logos(session)
+        for s in streams:
+            try:
+                logo = find_logo(s["name"], movitv_entries)
+            except Exception as e:
+                print(f"  ✗ {s['name']}  (logo error: {e} – left as is)")
+                continue
+            if logo:
+                s["logo"] = logo
+                logo_hits += 1
+                print(f"  ✓ {s['name']}  →  {logo}")
+            else:
+                print(f"  ✗ {s['name']}  (no match – left as is)")
+    except Exception as e:
+        print(f"\n3. Logo step failed ({e}) – writing playlist without logos")
+
+    # Write playlist – EVERY stream is written, logo or not
     lines = [
         "#EXTM3U",
         f"# Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
