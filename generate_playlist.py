@@ -22,7 +22,6 @@ ALLOWED_KEYWORDS = [
     "italian-serie-a",
     "barcelona",
     "real-madrid",
-    "russian-first-league",
     
 ]
 HEADERS = {
