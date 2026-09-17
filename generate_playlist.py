@@ -27,6 +27,7 @@ ALLOWED_KEYWORDS = [
     "barcelona",
     "real-madrid",
     "el-salvador-primera-division",
+    "fifa-u20-womens-world-cup",
 ]
 
 HEADERS = {
