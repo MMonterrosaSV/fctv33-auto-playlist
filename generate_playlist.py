@@ -24,9 +24,11 @@ ALLOWED_KEYWORDS = [
     "spanish-la-liga",
     "english-premier-league",
     "italian-serie-a",
+    "french-ligue-1",
+    "el-salvador-primera-division",
     "barcelona",
     "real-madrid",
-    "el-salvador-primera-division",
+    "vietnam-national-cup",
 ]
 
 HEADERS = {
